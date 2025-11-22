@@ -37,7 +37,7 @@ const useLocalStorage = (key, initialValue) => {
       const item = window.localStorage.getItem(key);
       return item ? JSON.parse(item) : initialValue;
     } catch (error) {
-      console.error(`Error reading localStorage key "${key}":`, error);
+      console.error(`Error reading localStorage key "${key}": `, error);
       return initialValue;
     }
   });
@@ -48,7 +48,7 @@ const useLocalStorage = (key, initialValue) => {
       setValue(valueToStore);
       window.localStorage.setItem(key, JSON.stringify(valueToStore));
     } catch (error) {
-      console.error(`Error writing localStorage key "${key}":`, error);
+      console.error(`Error writing localStorage key "${key}": `, error);
     }
   }, [key, value]);
 
@@ -56,7 +56,7 @@ const useLocalStorage = (key, initialValue) => {
 };
 
 const formatCurrency = (amount) => {
-  return `₦${new Intl.NumberFormat('en-US', { style: 'decimal' }).format(amount)}`;
+  return `₦${new Intl.NumberFormat('en-US', { style: 'decimal' }).format(amount)} `;
 };
 
 // --- Components ---
@@ -86,7 +86,7 @@ const Toast = ({ message, type, onClose }) => {
   const bgColors = { success: 'bg-emerald-600', error: 'bg-red-600', info: 'bg-indigo-600' };
 
   return (
-    <div className={`fixed top-4 left-1/2 -translate-x-1/2 md:top-auto md:bottom-4 md:left-auto md:right-4 md:translate-x-0 ${bgColors[type] || bgColors.info} text-white px-6 py-3 rounded-full shadow-2xl flex items-center space-x-3 z-[60] animate-fade-in`}>
+    <div className={`fixed top - 4 left - 1 / 2 - translate - x - 1 / 2 md: top - auto md: bottom - 4 md: left - auto md: right - 4 md: translate - x - 0 ${bgColors[type] || bgColors.info} text - white px - 6 py - 3 rounded - full shadow - 2xl flex items - center space - x - 3 z - [60] animate - fade -in `}>
       {type === 'success' && <Check className="w-5 h-5" />}
       {type === 'error' && <AlertTriangle className="w-5 h-5" />}
       <span className="font-medium text-sm">{message}</span>
@@ -118,6 +118,32 @@ const App = () => {
     });
   }, []); // Run once on mount
 
+  // Migrate products to add stockHistory if missing
+  useEffect(() => {
+    setProducts(prev => prev.map(p => {
+      if (!p.stockHistory) {
+        return {
+          ...p,
+          stockHistory: p.stock > 0 ? [
+            {
+              id: `inv - ${Date.now()} -${p.id} `,
+              type: 'opening',
+              quantity: p.stock,
+              previousStock: 0,
+              newStock: p.stock,
+              unitCost: p.buyPrice,
+              totalCost: p.stock * p.buyPrice,
+              reason: 'Opening stock',
+              date: new Date().toISOString(),
+              performedBy: userRole === 'super_admin' ? 'Super Admin' : 'Admin'
+            }
+          ] : []
+        };
+      }
+      return p;
+    }));
+  }, []); // Run once on mount
+
   const [cart, setCart] = useState([]);
   const [activeTab, setActiveTab] = useState('pos');
   const [modal, setModal] = useState(null);
@@ -144,7 +170,7 @@ const App = () => {
 
   const handleAddProduct = (newProduct) => {
     setProducts(prev => [...prev, {
-      id: `p-${Date.now()}`,
+      id: `p - ${Date.now()} `,
       name: newProduct.name,
       sellPrice: parseInt(newProduct.sellPrice, 10),
       buyPrice: parseInt(newProduct.buyPrice, 10),
@@ -164,6 +190,42 @@ const App = () => {
     setModal(null);
   };
 
+  const handleRestock = (productId, quantity, unitCost, reason = '') => {
+    if (quantity <= 0) {
+      showToast('Invalid quantity', 'error');
+      return;
+    }
+
+    setProducts(prev => prev.map(p => {
+      if (p.id === productId) {
+        const previousStock = p.stock;
+        const newStock = previousStock + quantity;
+        const transaction = {
+          id: `inv - ${Date.now()} `,
+          type: 'restock',
+          quantity: quantity,
+          previousStock,
+          newStock,
+          unitCost,
+          totalCost: quantity * unitCost,
+          reason: reason || 'Stock replenishment',
+          date: new Date().toISOString(),
+          performedBy: userRole === 'super_admin' ? 'Super Admin' : 'Admin'
+        };
+
+        return {
+          ...p,
+          stock: newStock,
+          stockHistory: [transaction, ...(p.stockHistory || [])]
+        };
+      }
+      return p;
+    }));
+
+    showToast(`Restocked ${quantity} units`, 'success');
+    setModal(null);
+  };
+
   const confirmAddToCart = (product, quantity, customPrice) => {
     const finalPrice = customPrice !== null ? customPrice : product.sellPrice;
     setCart(prevCart => {
@@ -177,7 +239,7 @@ const App = () => {
         return updatedCart;
       }
       if (quantity <= product.stock) {
-        return [...prevCart, { ...product, cartId: `c-${Date.now()}-${Math.random()}`, sellPrice: finalPrice, quantity }];
+        return [...prevCart, { ...product, cartId: `c - ${Date.now()} -${Math.random()} `, sellPrice: finalPrice, quantity }];
       } else {
         showToast('Not enough stock!', 'error');
         return prevCart;
@@ -207,7 +269,7 @@ const App = () => {
     const profit = totalRevenue - totalCost;
 
     const saleRecord = {
-      id: `s-${Date.now()}`,
+      id: `s - ${Date.now()} `,
       type: transactionType,
       paymentMethod, // 'cash' or 'bank_transfer'
       customerName: finalCustomerName,
@@ -217,12 +279,40 @@ const App = () => {
     };
 
     setSales(prev => [saleRecord, ...prev]);
+
+    // Track stock movements for sold items
+    setProducts(prev => prev.map(p => {
+      const soldItem = cart.find(c => c.id === p.id);
+      if (soldItem) {
+        const previousStock = p.stock;
+        const newStock = p.stock - soldItem.quantity;
+        const stockTransaction = {
+          id: `inv - ${Date.now()} -${p.id} `,
+          type: 'sale',
+          quantity: -soldItem.quantity, // Negative for sales
+          previousStock,
+          newStock,
+          saleId: saleRecord.id,
+          revenue: soldItem.sellPrice * soldItem.quantity,
+          date: new Date().toISOString(),
+          performedBy: userRole === 'super_admin' ? 'Super Admin' : 'Admin'
+        };
+
+        return {
+          ...p,
+          stock: newStock,
+          stockHistory: [stockTransaction, ...(p.stockHistory || [])]
+        };
+      }
+      return p;
+    }));
+
     if (transactionType === 'credit') {
       setDebtors(prev => {
         const existing = prev.find(d => d.name.toLowerCase() === finalCustomerName.toLowerCase());
         if (existing) return prev.map(d => d.id === existing.id ? { ...d, balance: d.balance + totalRevenue, history: [{ ...saleRecord, cart: saleRecord.cart }, ...d.history] } : d);
         // New debtor - will prompt for mobile later
-        return [...prev, { id: `debtor-${Date.now()}`, name: finalCustomerName, balance: totalRevenue, mobile: '', history: [{ ...saleRecord, cart: saleRecord.cart }] }];
+        return [...prev, { id: `debtor - ${Date.now()} `, name: finalCustomerName, balance: totalRevenue, mobile: '', history: [{ ...saleRecord, cart: saleRecord.cart }] }];
       });
       showToast(`Credit sale recorded.`, 'success');
     } else showToast(`Cash sale successful!`, 'success');
@@ -240,7 +330,7 @@ const App = () => {
     setDebtors(prev => prev.map(d => {
       if (d.id === debtorId) {
         const newBalance = Math.max(0, d.balance - amount);
-        return { ...d, balance: newBalance, history: [{ id: `p-${Date.now()}`, type: 'payment', amount, date: new Date().toISOString() }, ...d.history] };
+        return { ...d, balance: newBalance, history: [{ id: `p - ${Date.now()} `, type: 'payment', amount, date: new Date().toISOString() }, ...d.history] };
       }
       return d;
     }));
@@ -259,15 +349,15 @@ const App = () => {
     doc.setFontSize(20);
     doc.text("Daily Sales Report", 14, 22);
     doc.setFontSize(10);
-    doc.text(`Generated: ${now.toLocaleString()}`, 14, 28);
+    doc.text(`Generated: ${now.toLocaleString()} `, 14, 28);
 
     // Summary
     doc.setFillColor(240, 253, 244); // Emerald-50
     doc.rect(14, 35, 180, 25, 'F');
     doc.setFontSize(12);
-    doc.text(`Total Revenue: ${formatCurrency(stats.revenue)}`, 20, 45);
-    doc.text(`Net Profit: ${formatCurrency(stats.profit)}`, 20, 55);
-    doc.text(`Total Sales: ${stats.count}`, 100, 45);
+    doc.text(`Total Revenue: ${formatCurrency(stats.revenue)} `, 20, 45);
+    doc.text(`Net Profit: ${formatCurrency(stats.profit)} `, 20, 55);
+    doc.text(`Total Sales: ${stats.count} `, 100, 45);
 
     // Sales Table
     const tableData = filteredSales.map(s => [
@@ -292,10 +382,10 @@ const App = () => {
   const generateProductReportPDF = (productName, productStats) => {
     const doc = new jsPDF();
     doc.setFontSize(18);
-    doc.text(`Product Report: ${productName}`, 14, 22);
+    doc.text(`Product Report: ${productName} `, 14, 22);
     doc.setFontSize(12);
-    doc.text(`Total Sold: ${productStats.qty}`, 14, 32);
-    doc.text(`Total Revenue: ${formatCurrency(productStats.rev)}`, 14, 40);
+    doc.text(`Total Sold: ${productStats.qty} `, 14, 32);
+    doc.text(`Total Revenue: ${formatCurrency(productStats.rev)} `, 14, 40);
 
     doc.save(`product_report_${productName.replace(/\s+/g, '_')}.pdf`);
     showToast('Product report generated!', 'success');
@@ -321,10 +411,10 @@ const App = () => {
           <button
             key={item.id}
             onClick={() => { setActiveTab(item.id); setSelectedDebtor(null); }}
-            className={`w-full flex items-center p-3 rounded-xl transition-all duration-200 font-medium ${activeTab === item.id
-              ? 'bg-emerald-600 text-white shadow-lg shadow-emerald-900/20 translate-x-1'
-              : 'text-slate-400 hover:bg-slate-800 hover:text-white'
-              }`}
+            className={`w - full flex items - center p - 3 rounded - xl transition - all duration - 200 font - medium ${activeTab === item.id
+                ? 'bg-emerald-600 text-white shadow-lg shadow-emerald-900/20 translate-x-1'
+                : 'text-slate-400 hover:bg-slate-800 hover:text-white'
+              } `}
           >
             <item.icon className="w-5 h-5 mr-3" />
             {item.label}
@@ -342,8 +432,8 @@ const App = () => {
         <div className="bg-slate-800 rounded-xl p-1 flex">
           <button
             onClick={() => setUserRole('admin')}
-            className={`flex-1 py-2 text-xs font-bold rounded-lg transition-all ${userRole === 'admin' ? 'bg-emerald-600 text-white shadow-md' : 'text-slate-400 hover:text-white'
-              }`}
+            className={`flex - 1 py - 2 text - xs font - bold rounded - lg transition - all ${userRole === 'admin' ? 'bg-emerald-600 text-white shadow-md' : 'text-slate-400 hover:text-white'
+              } `}
           >
             Admin
           </button>
@@ -357,8 +447,8 @@ const App = () => {
                 showToast('Incorrect PIN', 'error');
               }
             }}
-            className={`flex-1 py-2 text-xs font-bold rounded-lg transition-all ${userRole === 'super_admin' ? 'bg-emerald-600 text-white shadow-md' : 'text-slate-400 hover:text-white'
-              }`}
+            className={`flex - 1 py - 2 text - xs font - bold rounded - lg transition - all ${userRole === 'super_admin' ? 'bg-emerald-600 text-white shadow-md' : 'text-slate-400 hover:text-white'
+              } `}
           >
             Super
           </button>
@@ -379,10 +469,10 @@ const App = () => {
         <button
           key={item.id}
           onClick={() => { setActiveTab(item.id); setSelectedDebtor(null); }}
-          className={`flex flex-col items-center p-2 rounded-xl transition-all active:scale-95 ${activeTab === item.id ? 'text-emerald-600 bg-emerald-50' : 'text-gray-400'
-            }`}
+          className={`flex flex - col items - center p - 2 rounded - xl transition - all active: scale - 95 ${activeTab === item.id ? 'text-emerald-600 bg-emerald-50' : 'text-gray-400'
+            } `}
         >
-          <item.icon className={`w-6 h-6 ${activeTab === item.id ? 'fill-current' : ''}`} />
+          <item.icon className={`w - 6 h - 6 ${activeTab === item.id ? 'fill-current' : ''} `} />
           <span className="text-[10px] font-bold mt-1">{item.label}</span>
         </button>
       ))}
@@ -397,7 +487,7 @@ const App = () => {
           onClick={() => setIsCartOpen(false)}
         />
       )}
-      <div className={`fixed bottom-0 left-0 right-0 bg-white rounded-t-3xl shadow-2xl z-50 md:hidden transform transition-transform duration-300 ease-out max-h-[85vh] flex flex-col ${isCartOpen ? 'translate-y-0' : 'translate-y-full'}`}>
+      <div className={`fixed bottom - 0 left - 0 right - 0 bg - white rounded - t - 3xl shadow - 2xl z - 50 md:hidden transform transition - transform duration - 300 ease - out max - h - [85vh] flex flex - col ${isCartOpen ? 'translate-y-0' : 'translate-y-full'} `}>
         <div className="p-4 border-b border-gray-100 flex justify-between items-center bg-gray-50/50 rounded-t-3xl" onClick={() => setIsCartOpen(false)}>
           <h2 className="text-lg font-bold text-gray-800 flex items-center">
             <ShoppingCart className="w-5 h-5 mr-2 text-emerald-600" /> Current Order
@@ -479,7 +569,7 @@ const App = () => {
 
                 <div className="relative z-10 flex flex-col h-full">
                   <div className="flex justify-between items-start mb-2">
-                    <div className={`text-[10px] font-bold px-2 py-1 rounded-full backdrop-blur-md ${p.stock < 10 ? 'bg-red-100/80 text-red-600' : 'bg-emerald-100/80 text-emerald-600'}`}>
+                    <div className={`text - [10px] font - bold px - 2 py - 1 rounded - full backdrop - blur - md ${p.stock < 10 ? 'bg-red-100/80 text-red-600' : 'bg-emerald-100/80 text-emerald-600'} `}>
                       {p.stock} left
                     </div>
                   </div>
@@ -606,15 +696,15 @@ const App = () => {
                 <div className="grid grid-cols-3 gap-3 text-sm">
                   <div>
                     <p className="text-gray-400 text-xs">Stock</p>
-                    <input type="number" value={p.stock} onChange={(e) => handleUpdate(p.id, 'stock', e.target.value)} disabled={userRole !== 'super_admin'} className={`w-full bg-gray-50 rounded-lg p-2 font-bold text-center mt-1 ${userRole !== 'super_admin' ? 'opacity-60 cursor-not-allowed' : ''}`} />
+                    <input type="number" value={p.stock} onChange={(e) => handleUpdate(p.id, 'stock', e.target.value)} disabled={userRole !== 'super_admin'} className={`w - full bg - gray - 50 rounded - lg p - 2 font - bold text - center mt - 1 ${userRole !== 'super_admin' ? 'opacity-60 cursor-not-allowed' : ''} `} />
                   </div>
                   <div>
                     <p className="text-gray-400 text-xs">Sell</p>
-                    <input type="number" value={p.sellPrice} onChange={(e) => handleUpdate(p.id, 'sellPrice', e.target.value)} disabled={userRole !== 'super_admin'} className={`w-full bg-gray-50 rounded-lg p-2 font-bold text-center mt-1 ${userRole !== 'super_admin' ? 'opacity-60 cursor-not-allowed' : ''}`} />
+                    <input type="number" value={p.sellPrice} onChange={(e) => handleUpdate(p.id, 'sellPrice', e.target.value)} disabled={userRole !== 'super_admin'} className={`w - full bg - gray - 50 rounded - lg p - 2 font - bold text - center mt - 1 ${userRole !== 'super_admin' ? 'opacity-60 cursor-not-allowed' : ''} `} />
                   </div>
                   <div>
                     <p className="text-gray-400 text-xs">Buy</p>
-                    <input type="number" value={p.buyPrice} onChange={(e) => handleUpdate(p.id, 'buyPrice', e.target.value)} disabled={userRole !== 'super_admin'} className={`w-full bg-gray-50 rounded-lg p-2 font-bold text-center mt-1 ${userRole !== 'super_admin' ? 'opacity-60 cursor-not-allowed' : ''}`} />
+                    <input type="number" value={p.buyPrice} onChange={(e) => handleUpdate(p.id, 'buyPrice', e.target.value)} disabled={userRole !== 'super_admin'} className={`w - full bg - gray - 50 rounded - lg p - 2 font - bold text - center mt - 1 ${userRole !== 'super_admin' ? 'opacity-60 cursor-not-allowed' : ''} `} />
                   </div>
                 </div>
               </div>
@@ -630,16 +720,37 @@ const App = () => {
                   <th className="px-6 py-4">Sell Price</th>
                   <th className="px-6 py-4">Buy Price</th>
                   <th className="px-6 py-4">Status</th>
+                  <th className="px-6 py-4">Actions</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-gray-100">
                 {products.map(p => (
                   <tr key={p.id} className="hover:bg-gray-50/50 transition-colors">
                     <td className="px-6 py-4 font-medium text-gray-900">{p.name}</td>
-                    <td className="px-6 py-4"><input type="number" value={p.stock} onChange={(e) => handleUpdate(p.id, 'stock', e.target.value)} disabled={userRole !== 'super_admin'} className={`w-20 bg-gray-100 border-none rounded-lg px-3 py-1 text-center focus:ring-2 focus:ring-indigo-500 font-bold text-gray-700 ${userRole !== 'super_admin' ? 'opacity-60 cursor-not-allowed' : ''}`} /></td>
-                    <td className="px-6 py-4"><input type="number" value={p.sellPrice} onChange={(e) => handleUpdate(p.id, 'sellPrice', e.target.value)} disabled={userRole !== 'super_admin'} className={`w-24 bg-transparent border border-gray-200 rounded-lg px-2 py-1 focus:ring-2 focus:ring-indigo-500 ${userRole !== 'super_admin' ? 'opacity-60 cursor-not-allowed' : ''}`} /></td>
-                    <td className="px-6 py-4"><input type="number" value={p.buyPrice} onChange={(e) => handleUpdate(p.id, 'buyPrice', e.target.value)} disabled={userRole !== 'super_admin'} className={`w-24 bg-transparent border border-gray-200 rounded-lg px-2 py-1 focus:ring-2 focus:ring-indigo-500 ${userRole !== 'super_admin' ? 'opacity-60 cursor-not-allowed' : ''}`} /></td>
+                    <td className="px-6 py-4"><input type="number" value={p.stock} onChange={(e) => handleUpdate(p.id, 'stock', e.target.value)} disabled={userRole !== 'super_admin'} className={`w - 20 bg - gray - 100 border - none rounded - lg px - 3 py - 1 text - center focus: ring - 2 focus: ring - indigo - 500 font - bold text - gray - 700 ${userRole !== 'super_admin' ? 'opacity-60 cursor-not-allowed' : ''} `} /></td>
+                    <td className="px-6 py-4"><input type="number" value={p.sellPrice} onChange={(e) => handleUpdate(p.id, 'sellPrice', e.target.value)} disabled={userRole !== 'super_admin'} className={`w - 24 bg - transparent border border - gray - 200 rounded - lg px - 2 py - 1 focus: ring - 2 focus: ring - indigo - 500 ${userRole !== 'super_admin' ? 'opacity-60 cursor-not-allowed' : ''} `} /></td>
+                    <td className="px-6 py-4"><input type="number" value={p.buyPrice} onChange={(e) => handleUpdate(p.id, 'buyPrice', e.target.value)} disabled={userRole !== 'super_admin'} className={`w - 24 bg - transparent border border - gray - 200 rounded - lg px - 2 py - 1 focus: ring - 2 focus: ring - indigo - 500 ${userRole !== 'super_admin' ? 'opacity-60 cursor-not-allowed' : ''} `} /></td>
                     <td className="px-6 py-4">{p.stock < 10 ? <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-red-100 text-red-800">Low Stock</span> : <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-green-100 text-green-800">In Stock</span>}</td>
+                    <td className="px-6 py-4">
+                      <div className="flex gap-2">
+                        {userRole === 'super_admin' && (
+                          <button
+                            onClick={() => setModal({ type: 'restock', data: p })}
+                            className="px-3 py-1.5 bg-indigo-600 text-white text-xs font-medium rounded-lg hover:bg-indigo-700 transition-colors flex items-center"
+                            title="Restock"
+                          >
+                            <Package className="w-3.5 h-3.5 mr-1" /> Restock
+                          </button>
+                        )}
+                        <button
+                          onClick={() => setModal({ type: 'stock_history', data: p })}
+                          className="px-3 py-1.5 bg-gray-100 text-gray-700 text-xs font-medium rounded-lg hover:bg-gray-200 transition-colors flex items-center"
+                          title="View History"
+                        >
+                          <History className="w-3.5 h-3.5 mr-1" /> History
+                        </button>
+                      </div>
+                    </td>
                   </tr>
                 ))}
               </tbody>
@@ -712,7 +823,7 @@ const App = () => {
             <button onClick={() => generateDailyReportPDF(filteredSales, stats)} className="px-4 py-2 bg-slate-800 text-white rounded-lg text-sm font-medium flex items-center hover:bg-slate-900"><Printer className="w-4 h-4 mr-2" /> Daily Report</button>
             <div className="flex bg-white p-1 rounded-xl shadow-sm border border-gray-200 w-full sm:w-auto overflow-x-auto">
               {['today', 'week', 'month', 'all'].map(f => (
-                <button key={f} onClick={() => setFilter(f)} className={`flex-1 sm:flex-none px-4 py-2 rounded-lg text-sm font-medium capitalize transition-all ${filter === f ? 'bg-indigo-600 text-white shadow-md' : 'text-gray-500 hover:bg-gray-50'}`}>{f}</button>
+                <button key={f} onClick={() => setFilter(f)} className={`flex - 1 sm: flex - none px - 4 py - 2 rounded - lg text - sm font - medium capitalize transition - all ${filter === f ? 'bg-indigo-600 text-white shadow-md' : 'text-gray-500 hover:bg-gray-50'} `}>{f}</button>
               ))}
             </div>
           </div>
@@ -728,9 +839,9 @@ const App = () => {
             <div key={i} className="bg-white p-4 sm:p-6 rounded-2xl shadow-sm border border-gray-100 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-2">
               <div>
                 <p className="text-xs sm:text-sm font-medium text-gray-500 mb-1">{stat.label}</p>
-                <p className={`text-lg sm:text-2xl font-black ${stat.color}`}>{stat.isCount ? stat.value : formatCurrency(stat.value)}</p>
+                <p className={`text - lg sm: text - 2xl font - black ${stat.color} `}>{stat.isCount ? stat.value : formatCurrency(stat.value)}</p>
               </div>
-              <div className={`p-2 sm:p-3 rounded-xl ${stat.bg}`}><stat.icon className={`w-5 h-5 sm:w-6 sm:h-6 ${stat.color}`} /></div>
+              <div className={`p - 2 sm: p - 3 rounded - xl ${stat.bg} `}><stat.icon className={`w - 5 h - 5 sm: w - 6 sm: h - 6 ${stat.color} `} /></div>
             </div>
           ))}
         </div>
@@ -749,7 +860,7 @@ const App = () => {
                 </defs>
                 <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f1f5f9" />
                 <XAxis dataKey="name" axisLine={false} tickLine={false} tick={{ fill: '#94a3b8', fontSize: 12 }} />
-                <YAxis axisLine={false} tickLine={false} tick={{ fill: '#94a3b8', fontSize: 12 }} tickFormatter={(value) => `₦${value}`} />
+                <YAxis axisLine={false} tickLine={false} tick={{ fill: '#94a3b8', fontSize: 12 }} tickFormatter={(value) => `₦${value} `} />
                 <Tooltip
                   contentStyle={{ borderRadius: '12px', border: 'none', boxShadow: '0 10px 15px -3px rgb(0 0 0 / 0.1)' }}
                   formatter={(value) => [formatCurrency(value), 'Revenue']}
@@ -773,7 +884,7 @@ const App = () => {
                       <button onClick={() => generateProductReportPDF(p.name, p)} className="text-gray-400 hover:text-indigo-600 opacity-0 group-hover:opacity-100 transition-opacity" title="Print Product Report"><FileText className="w-4 h-4" /></button>
                     </div>
                   </div>
-                  <div className="w-full bg-gray-100 rounded-full h-2"><div className="bg-indigo-500 h-2 rounded-full" style={{ width: `${(p.rev / stats.revenue) * 100}%` }}></div></div>
+                  <div className="w-full bg-gray-100 rounded-full h-2"><div className="bg-indigo-500 h-2 rounded-full" style={{ width: `${(p.rev / stats.revenue) * 100}% ` }}></div></div>
                   <p className="text-xs text-gray-400 mt-1">{p.qty} sold</p>
                 </div>
               )) : <p className="text-gray-400 italic text-center py-10">No data available</p>}
@@ -796,7 +907,7 @@ const App = () => {
                     <tr key={sale.id} className="hover:bg-gray-50/50">
                       <td className="px-4 py-3 text-sm text-gray-500">{new Date(sale.date).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</td>
                       <td className="px-4 py-3 text-sm font-medium text-gray-900">{sale.customerName}</td>
-                      <td className="px-4 py-3 text-sm"><span className={`px-2 py-1 rounded-full text-xs font-bold ${sale.type === 'credit' ? 'bg-red-100 text-red-600' : 'bg-green-100 text-green-600'}`}>{sale.type.toUpperCase()}</span></td>
+                      <td className="px-4 py-3 text-sm"><span className={`px - 2 py - 1 rounded - full text - xs font - bold ${sale.type === 'credit' ? 'bg-red-100 text-red-600' : 'bg-green-100 text-green-600'} `}>{sale.type.toUpperCase()}</span></td>
                       <td className="px-4 py-3 text-xs">
                         {sale.paymentMethod === 'bank_transfer' ? (
                           <span className="text-indigo-600 font-medium">🏦 Transfer</span>
@@ -835,7 +946,7 @@ const App = () => {
               const isOverdue = daysSinceFirst > 3;
 
               return (
-                <div key={d.id} onClick={() => setSelectedDebtor(d)} className={`p-4 rounded-xl cursor-pointer transition-all border ${selectedDebtor?.id === d.id ? 'bg-red-50 border-red-200 shadow-sm' : isOverdue ? 'bg-orange-50 border-orange-200 hover:bg-orange-100' : 'bg-white border-transparent hover:bg-gray-50'}`}>
+                <div key={d.id} onClick={() => setSelectedDebtor(d)} className={`p - 4 rounded - xl cursor - pointer transition - all border ${selectedDebtor?.id === d.id ? 'bg-red-50 border-red-200 shadow-sm' : isOverdue ? 'bg-orange-50 border-orange-200 hover:bg-orange-100' : 'bg-white border-transparent hover:bg-gray-50'} `}>
                   <div className="flex justify-between items-center">
                     <h4 className="font-bold text-gray-800">{d.name}</h4>
                     <span className="font-bold text-red-600">{formatCurrency(d.balance)}</span>
@@ -850,7 +961,7 @@ const App = () => {
           </div>
         </div>
 
-        <div className={`flex-1 bg-white rounded-3xl shadow-sm border border-gray-100 p-6 lg:p-8 flex flex-col fixed inset-0 z-50 lg:static lg:z-auto transform transition-transform duration-300 ${selectedDebtor ? 'translate-x-0' : 'translate-x-full lg:translate-x-0'}`}>
+        <div className={`flex - 1 bg - white rounded - 3xl shadow - sm border border - gray - 100 p - 6 lg: p - 8 flex flex - col fixed inset - 0 z - 50 lg:static lg: z - auto transform transition - transform duration - 300 ${selectedDebtor ? 'translate-x-0' : 'translate-x-full lg:translate-x-0'} `}>
           {selectedDebtor ? (
             <>
               <div className="lg:hidden mb-4"><button onClick={() => setSelectedDebtor(null)} className="flex items-center text-gray-500"><ChevronLeft className="w-5 h-5 mr-1" /> Back</button></div>
@@ -912,18 +1023,18 @@ const App = () => {
                 {selectedDebtor.history.map((h, i) => (
                   <div key={i} className="flex items-center justify-between p-4 bg-white border border-gray-100 rounded-xl shadow-sm">
                     <div className="flex items-center space-x-4">
-                      <div className={`p-2 rounded-full ${h.type === 'payment' ? 'bg-green-100 text-green-600' : 'bg-red-100 text-red-600'}`}>{h.type === 'payment' ? <Check className="w-5 h-5" /> : <ShoppingCart className="w-5 h-5" />}</div>
+                      <div className={`p - 2 rounded - full ${h.type === 'payment' ? 'bg-green-100 text-green-600' : 'bg-red-100 text-red-600'} `}>{h.type === 'payment' ? <Check className="w-5 h-5" /> : <ShoppingCart className="w-5 h-5" />}</div>
                       <div>
                         <p className="font-bold text-gray-800 capitalize">{h.type === 'debt' ? 'Credit Sale' : 'Payment'}</p>
                         {h.type === 'debt' && h.cart && (
                           <p className="text-xs text-gray-500 mt-0.5 line-clamp-1">
-                            {h.cart.map(i => `${i.quantity}x ${i.name}`).join(', ')}
+                            {h.cart.map(i => `${i.quantity}x ${i.name} `).join(', ')}
                           </p>
                         )}
                         <p className="text-xs text-gray-400">{new Date(h.date).toLocaleString()}</p>
                       </div>
                     </div>
-                    <span className={`font-bold text-lg ${h.type === 'payment' ? 'text-green-600' : 'text-red-600'}`}>{h.type === 'payment' ? '-' : '+'}{formatCurrency(h.amount)}</span>
+                    <span className={`font - bold text - lg ${h.type === 'payment' ? 'text-green-600' : 'text-red-600'} `}>{h.type === 'payment' ? '-' : '+'}{formatCurrency(h.amount)}</span>
                   </div>
                 ))}
               </div>
@@ -989,20 +1100,20 @@ const App = () => {
               <button
                 type="button"
                 onClick={() => setPaymentMethod('cash')}
-                className={`py-3 rounded-lg font-medium transition-all ${paymentMethod === 'cash'
+                className={`py - 3 rounded - lg font - medium transition - all ${paymentMethod === 'cash'
                     ? 'bg-emerald-600 text-white shadow-md'
                     : 'bg-white border border-gray-200 text-gray-700 hover:border-emerald-400'
-                  }`}
+                  } `}
               >
                 💵 Cash
               </button>
               <button
                 type="button"
                 onClick={() => setPaymentMethod('bank_transfer')}
-                className={`py-3 rounded-lg font-medium transition-all ${paymentMethod === 'bank_transfer'
+                className={`py - 3 rounded - lg font - medium transition - all ${paymentMethod === 'bank_transfer'
                     ? 'bg-emerald-600 text-white shadow-md'
                     : 'bg-white border border-gray-200 text-gray-700 hover:border-emerald-400'
-                  }`}
+                  } `}
               >
                 🏦 Transfer
               </button>
@@ -1032,6 +1143,175 @@ const App = () => {
           <textarea name="names" rows="6" className="w-full p-3 border rounded-xl" placeholder="John Doe&#10;Jane Smith"></textarea>
           <button type="submit" className="w-full py-3 bg-indigo-600 text-white font-bold rounded-xl hover:bg-indigo-700">Import</button>
         </form>
+      );
+    }
+
+    // Restock Modal
+    if (modal.type === 'restock') {
+      const p = modal.data;
+      const [restockQty, setRestockQty] = useState(1);
+      const [unitCost, setUnitCost] = useState(p.buyPrice);
+      const [reason, setReason] = useState('');
+      const totalCost = restockQty * unitCost;
+
+      return (
+        <div className="space-y-4">
+          <div className="text-center pb-3 border-b">
+            <h4 className="text-xl font-bold text-gray-800">{p.name}</h4>
+            <p className="text-sm text-gray-500 mt-1">Current Stock: <span className="font-bold text-indigo-600">{p.stock} units</span></p>
+          </div>
+
+          <form onSubmit={(e) => { e.preventDefault(); handleRestock(p.id, restockQty, unitCost, reason); setRestockQty(1); setUnitCost(p.buyPrice); setReason(''); }}>
+            <div className="space-y-4">
+              {/* Quantity selector */}
+              <div>
+                <label className="block text-sm font-bold text-gray-700 mb-2">Quantity to Add</label>
+                <div className="flex items-center justify-center gap-4">
+                  <button
+                    type="button"
+                    onClick={() => setRestockQty(Math.max(1, restockQty - 1))}
+                    className="w-12 h-12 bg-gray-200 hover:bg-gray-300 rounded-xl font-bold text-xl transition-colors"
+                  >
+                    −
+                  </button>
+                  <div className="w-24 h-12 flex items-center justify-center border-2 border-indigo-300 rounded-xl bg-indigo-50">
+                    <span className="text-2xl font-black text-indigo-700">{restockQty}</span>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => setRestockQty(restockQty + 1)}
+                    className="w-12 h-12 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl font-bold text-xl transition-colors"
+                  >
+                    +
+                  </button>
+                </div>
+              </div>
+
+              {/* Unit Cost */}
+              <div>
+                <label className="block text-sm font-bold text-gray-700 mb-1">Unit Cost (₦)</label>
+                <input
+                  type="number"
+                  value={unitCost}
+                  onChange={(e) => setUnitCost(parseInt(e.target.value) || 0)}
+                  className="w-full p-3 border rounded-xl text-center focus:ring-2 focus:ring-indigo-500 font-bold"
+                  min="0"
+                  required
+                />
+              </div>
+
+              {/* Total Cost Display */}
+              <div className="bg-gray-50 p-4 rounded-xl">
+                <p className="text-sm text-gray-600 mb-1">Total Cost</p>
+                <p className="text-2xl font-black text-gray-900">{formatCurrency(totalCost)}</p>
+              </div>
+
+              {/* Reason */}
+              <div>
+                <label className="block text-sm font-bold text-gray-700 mb-1">Reason (optional)</label>
+                <input
+                  type="text"
+                  value={reason}
+                  onChange={(e) => setReason(e.target.value)}
+                  placeholder="e.g., New supply from vendor"
+                  className="w-full p-3 border rounded-xl focus:ring-2 focus:ring-indigo-500"
+                />
+              </div>
+
+              <button type="submit" className="w-full py-3 bg-indigo-600 text-white font-bold rounded-xl hover:bg-indigo-700 transition-all shadow-lg shadow-indigo-600/20">
+                📦 Restock {restockQty} Unit{restockQty > 1 ? 's' : ''}
+              </button>
+            </div>
+          </form>
+        </div>
+      );
+    }
+
+    // Stock History Modal
+    if (modal.type === 'stock_history') {
+      const p = modal.data;
+      const history = p.stockHistory || [];
+      const [filter, setFilter] = useState('all'); // 'all', 'restock', 'sale'
+
+      const filteredHistory = history.filter(h => {
+        if (filter === 'all') return true;
+        return h.type === filter;
+      });
+
+      const getIcon = (type) => {
+        if (type === 'restock') return '📦';
+        if (type === 'sale') return '🛒';
+        if (type === 'opening') return '🏁';
+        return '✏️';
+      };
+
+      return (
+        <div className="space-y-4 max-h-[70vh] overflow-hidden flex flex-col">
+          <div className="text-center pb-3 border-b">
+            <h4 className="text-xl font-bold text-gray-800">Stock History</h4>
+            <p className="text-sm text-gray-600 mt-1">{p.name}</p>
+          </div>
+
+          {/* Filter */}
+          <div className="flex gap-2 flex-wrap">
+            {['all', 'restock', 'sale'].map(f => (
+              <button
+                key={f}
+                onClick={() => setFilter(f)}
+                className={`px - 3 py - 1.5 rounded - lg text - xs font - medium transition - all ${filter === f
+                    ? 'bg-indigo-600 text-white shadow-md'
+                    : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
+                  } `}
+              >
+                {f === 'all' ? 'All' : f === 'restock' ? '📦 Restocks' : '🛒 Sales'}
+              </button>
+            ))}
+          </div>
+
+          {/* History List */}
+          <div className="flex-1 overflow-y-auto space-y-3 pr-2">
+            {filteredHistory.length === 0 ? (
+              <p className="text-center text-gray-400 py-10">No stock movements yet</p>
+            ) : (
+              filteredHistory.map((h, i) => (
+                <div key={i} className="bg-white border border-gray-200 rounded-xl p-4 hover:shadow-sm transition-shadow">
+                  <div className="flex items-start justify-between">
+                    <div className="flex items-start space-x-3">
+                      <span className="text-2xl">{getIcon(h.type)}</span>
+                      <div>
+                        <p className="font-bold text-gray-800 capitalize">{h.type === 'opening' ? 'Opening Stock' : h.type}</p>
+                        <p className="text-xs text-gray-500 mt-0.5">{new Date(h.date).toLocaleString()}</p>
+                        {h.reason && <p className="text-xs text-gray-600 mt-1 italic">{h.reason}</p>}
+                        {h.performedBy && <p className="text-xs text-gray-400 mt-0.5">By: {h.performedBy}</p>}
+                      </div>
+                    </div>
+                    <div className="text-right">
+                      <p className={`text - lg font - black ${h.quantity > 0 ? 'text-emerald-600' : 'text-red-600'
+                        } `}>
+                        {h.quantity > 0 ? '+' : ''}{h.quantity}
+                      </p>
+                      <p className="text-xs text-gray-500 mt-1">
+                        {h.previousStock} → {h.newStock}
+                      </p>
+                    </div>
+                  </div>
+                  {h.totalCost && (
+                    <div className="mt-3 pt-3 border-t border-gray-100 flex justify-between text-xs">
+                      <span className="text-gray-600">Cost:</span>
+                      <span className="font-bold text-gray-800">{formatCurrency(h.totalCost)}</span>
+                    </div>
+                  )}
+                  {h.revenue && (
+                    <div className="mt-3 pt-3 border-t border-gray-100 flex justify-between text-xs">
+                      <span className="text-gray-600">Revenue:</span>
+                      <span className="font-bold text-emerald-600">{formatCurrency(h.revenue)}</span>
+                    </div>
+                  )}
+                </div>
+              ))
+            )}
+          </div>
+        </div>
       );
     }
   };
